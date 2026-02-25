@@ -5,10 +5,9 @@ from datetime import datetime
 import uuid
 
 # Configuration
-# (Popisky a komentare pisu v anglictine, jak jsi driv zminoval)
 st.set_page_config(page_title="Mame uklizeno", layout="wide", page_icon="🏠")
 
-# 1. CONNECTION (Clean connection that worked for you)
+# 1. CONNECTION 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # 2. LOAD DICTIONARY
@@ -34,8 +33,10 @@ def log_action(old_log, action):
 with st.sidebar:
     selected_lang = st.selectbox("Jazyk / Language", ["CS", "EN"])
     
-    # Helper translation function
+    # Helper translation function (improved to handle empty values safely)
     def _t(key):
+        if not isinstance(key, str) or key == "":
+            return key
         return translations.get(selected_lang, {}).get(key, key)
 
     st.title(_t("settings"))
@@ -68,7 +69,10 @@ for i, tab in enumerate(tabs):
                     d_prov = st.date_input(_t("date_done"), value=None)
                     u_typ = None
                     if sheet_name == "Snih":
-                        u_typ = st.selectbox(_t("maint_type"), [_t("maint_normal"), _t("maint_hard")])
+                        # We use raw keys for database, but translate them for display
+                        typ_options = ["Bezna udrzba", "Ztizena udrzba"]
+                        u_typ = st.selectbox(_t("maint_type"), typ_options, format_func=lambda x: _t(x))
+                    
                     note = st.text_input(_t("note"))
 
                     if st.form_submit_button(_t("save_btn")):
@@ -117,6 +121,10 @@ for i, tab in enumerate(tabs):
                     display_df = df_view.sort_values("Datum_Provedeni", ascending=False).copy()
                     display_df["Datum_Provedeni"] = display_df["Datum_Provedeni"].dt.strftime('%d.%m.%Y')
                     display_df["Datum_Zapisu"] = display_df["Datum_Zapisu"].dt.strftime('%d.%m.%Y')
+
+                    # Translate database values inside the "Typ_Udrzby" column before showing
+                    if "Typ_Udrzby" in display_df.columns:
+                        display_df["Typ_Udrzby"] = display_df["Typ_Udrzby"].apply(lambda x: _t(x))
 
                     rename_dict = {
                         "Datum_Provedeni": _t("col_date_done"),
