@@ -4,127 +4,185 @@ import pandas as pd
 from datetime import datetime
 import uuid
 
-# Configuration
-# Poznámka: Diakritiku v textech (háčky/čárky) raději dočasně vynecháme pro stabilitu
-st.set_page_config(page_title="Mame uklizeno", layout="wide", page_icon="🏠")
+# Page configuration
+st.set_page_config(page_title="App", layout="wide", page_icon="🏠")
 
-# Connection
-conn = st.connection("gsheets", type=GSheetsConnection)
+# Load and fix the private key from secrets
+raw_key = st.secrets["connections"]["gsheets"]["p_key"]
+fixed_key = raw_key.replace("\\n", "\n")
 
+# Create connection
+conn = st.connection("gsheets", type=GSheetsConnection, private_key=fixed_key)
 
-# Helper: Log action history
+# Load dictionary data
+try:
+    # Read the dictionary sheet, cache it for performance
+    dict_df = conn.read(worksheet="Slovnik", ttl=60)
+    
+    # Create a mapping dictionary for fast lookups
+    translations = {}
+    for lang in ["CS", "EN"]:
+        if lang in dict_df.columns:
+            translations[lang] = dict_df.set_index("Klic")[lang].to_dict()
+except Exception as e:
+    st.error("Dictionary could not be loaded. Please check 'Slovnik' sheet.")
+    st.stop()
+
+# Helper function to append action history
 def log_action(old_log, action):
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
     new_entry = f"[{now}] {action}"
-    if pd.isna(old_log) or old_log == "":
+    if pd.isna(old_log) or str(old_log).strip() == "":
         return new_entry
     return f"{new_entry}\n{old_log}"
 
-# --- AUTHENTICATION ---
+# --- SIDEBAR: AUTHENTICATION & LANGUAGE ---
 with st.sidebar:
-    st.title("Nastaveni")
-    admin_mode = st.text_input("Admin heslo", type="password") == "mojeheslo123"
-    if admin_mode:
-        st.success("Jste v rezimu spravce")
+    # Language selector
+    selected_lang = st.selectbox("Jazyk / Language", ["CS", "EN"])
+    
+    # Helper translation function
+    def _t(key):
+        return translations.get(selected_lang, {}).get(key, key)
 
-st.title("🏠 Mame uklizeno")
+    st.title(_t("settings"))
+    admin_mode = st.text_input(_t("admin_pass"), type="password") == "mojeheslo123"
+    if admin_mode:
+        st.success(_t("admin_ok"))
+
+# --- MAIN UI ---
+st.title(f"🏠 {_t('app_title')}")
 st.markdown("---")
 
-tab_names = ["Uklid schodiste", "Uklid snehu"]
+tab_names = [_t("tab_stairs"), _t("tab_snow")]
 tabs = st.tabs(tab_names)
 
 for i, tab in enumerate(tabs):
+    # Keep underlying sheet names constant for API calls
     sheet_name = "Schodiste" if i == 0 else "Snih"
+    
     with tab:
         # 1. READ DATA
-        raw_df = conn.read(worksheet=sheet_name, ttl=0)
-
+        try:
+            raw_df = conn.read(worksheet=sheet_name, ttl=0)
+        except Exception as e:
+            st.error("Data error.")
+            continue
 
         # 2. ADMIN: ADD NEW RECORD
         if admin_mode:
-            with st.expander(f"Novy zaznam: {tab_names[i]}"):
+            with st.expander(f"{_t('new_record')} {tab_names[i]}"):
                 with st.form(f"form_add_{sheet_name}", clear_on_submit=True):
-                    d_prov = st.date_input("Datum provedeni", value=None)
+                    d_prov = st.date_input(_t("date_done"), value=None)
                     u_typ = None
                     if sheet_name == "Snih":
-                        u_typ = st.selectbox("Typ udrzby", ["Bezna udrzba", "Ztizena udrzba"])
-                    note = st.text_input("Poznamka")
+                        u_typ = st.selectbox(_t("maint_type"), [_t("maint_normal"), _t("maint_hard")])
+                    note = st.text_input(_t("note"))
 
-                    if st.form_submit_button("Ulozit zaznam"):
+                    if st.form_submit_button(_t("save_btn")):
                         final_date = d_prov if d_prov else datetime.now().date()
                         new_row = {
                             "ID": str(uuid.uuid4())[:8],
                             "Datum_Provedeni": final_date.isoformat(),
                             "Datum_Zapisu": datetime.now().date().isoformat(),
-                            "Typ_Udrzby": u_typ,
+                            "Typ_Udrzby": u_typ if u_typ else "",
                             "Poznamka": note,
-                            "Historie_Zmen": log_action("", "Vytvoreno"),
+                            "Historie_Zmen": log_action("", _t("log_created")),
                             "Smazano": "NE"
                         }
-                        # Prevod na DataFrame a spojeni
+                        # Convert to DataFrame and push to Google Sheets
                         new_row_df = pd.DataFrame([new_row])
                         updated_df = pd.concat([raw_df, new_row_df], ignore_index=True)
                         conn.update(worksheet=sheet_name, data=updated_df)
-                        st.success("Ulozeno!")
+                        st.success(_t("saved_ok"))
                         st.rerun()
 
         # 3. DISPLAY & FILTERS
-        st.subheader("Prehled provedenych praci")
+        st.subheader(_t("overview"))
+        
         if not raw_df.empty:
             df_view = raw_df[raw_df["Smazano"] == "NE"].copy()
+            
             if not df_view.empty:
+                # Convert dates to datetime objects for filtering
                 df_view["Datum_Provedeni"] = pd.to_datetime(df_view["Datum_Provedeni"])
+                df_view["Datum_Zapisu"] = pd.to_datetime(df_view["Datum_Zapisu"])
 
-                c1, c2 = st.columns([1, 2])
-                with c1:
-                    view = st.radio("Zobrazit:", ["Vse", "Tento mesic", "Tento rok"], horizontal=True, key=f"v_{sheet_name}")
+                # Create dropdown options for billing months
+                month_year_list = df_view["Datum_Provedeni"].dt.strftime('%m/%Y').unique().tolist()
+                month_year_list = sorted(month_year_list, reverse=True)
+                filter_options = [_t("show_all")] + month_year_list
 
-                now = datetime.now()
-                if view == "Tento mesic":
-                    df_view = df_view[df_view["Datum_Provedeni"].dt.month == now.month]
-                elif view == "Tento rok":
-                    df_view = df_view[df_view["Datum_Provedeni"].dt.year == now.year]
+                selected_month = st.selectbox(
+                    _t("billing_month"), 
+                    filter_options, 
+                    key=f"filter_{sheet_name}"
+                )
 
-                display_df = df_view.sort_values("Datum_Provedeni", ascending=False).copy()
-                display_df["Datum_Provedeni"] = display_df["Datum_Provedeni"].dt.strftime('%d.%m.%Y')
+                # Filter dataframe by selected month
+                if selected_month != _t("show_all"):
+                    df_view = df_view[df_view["Datum_Provedeni"].dt.strftime('%m/%Y') == selected_month]
 
-                st.dataframe(display_df[["Datum_Provedeni", "Typ_Udrzby", "Poznamka", "ID"]],
-                             use_container_width=True, hide_index=True)
+                if df_view.empty:
+                    st.info(_t("no_records_month"))
+                else:
+                    # Sort records from newest to oldest
+                    display_df = df_view.sort_values("Datum_Provedeni", ascending=False).copy()
+                    
+                    # Format dates for presentation
+                    display_df["Datum_Provedeni"] = display_df["Datum_Provedeni"].dt.strftime('%d.%m.%Y')
+                    display_df["Datum_Zapisu"] = display_df["Datum_Zapisu"].dt.strftime('%d.%m.%Y')
 
-                # 4. ADMIN: EDIT / DELETE
-                if admin_mode:
-                    with st.expander("Upravit / Smazat existujici zaznam"):
-                        edit_id = st.selectbox("Vyberte ID zaznamu", df_view["ID"], key=f"sel_{sheet_name}")
-                        curr_row = df_view[df_view["ID"] == edit_id].iloc[0]
+                    # Translate column names using the dictionary
+                    rename_dict = {
+                        "Datum_Provedeni": _t("col_date_done"),
+                        "Datum_Zapisu": _t("col_date_saved"),
+                        "Typ_Udrzby": _t("maint_type"),
+                        "Poznamka": _t("note"),
+                        "Historie_Zmen": _t("col_history"),
+                        "ID": _t("col_id")
+                    }
+                    display_df = display_df.rename(columns=rename_dict)
 
-                        with st.form(f"edit_form_{sheet_name}"):
-                            new_note = st.text_input("Upravit poznamku", value=curr_row["Poznamka"])
-                            col_b1, col_b2 = st.columns(2)
+                    # Dynamic column selection based on active tab
+                    if sheet_name == "Snih":
+                        cols_to_show = [_t("col_date_done"), _t("col_date_saved"), _t("maint_type"), _t("note"), _t("col_history"), _t("col_id")]
+                    else:
+                        cols_to_show = [_t("col_date_done"), _t("col_date_saved"), _t("note"), _t("col_history"), _t("col_id")]
 
-                            if col_b1.form_submit_button("Ulozit zmeny"):
-                                raw_df.loc[raw_df["ID"] == edit_id, "Poznamka"] = new_note
-                                raw_df.loc[raw_df["ID"] == edit_id, "Historie_Zmen"] = log_action(
-                                    curr_row["Historie_Zmen"], f"Upravena poznamka na: {new_note}"
-                                )
-                                conn.update(worksheet=sheet_name, data=raw_df)
-                                st.success("Upraveno!")
-                                st.rerun()
+                    # Render table
+                    st.dataframe(display_df[cols_to_show], use_container_width=True, hide_index=True)
 
-                            if col_b2.form_submit_button("SMAZAT ZAZNAM"):
-                                raw_df.loc[raw_df["ID"] == edit_id, "Smazano"] = "ANO"
-                                raw_df.loc[raw_df["ID"] == edit_id, "Historie_Zmen"] = log_action(
-                                    curr_row["Historie_Zmen"], "Zaznam smazan"
-                                )
-                                conn.update(worksheet=sheet_name, data=raw_df)
-                                st.warning("Smazano!")
-                                st.rerun()
+                    # 4. ADMIN: EDIT / DELETE
+                    if admin_mode:
+                        with st.expander(_t("edit_expand")):
+                            edit_id = st.selectbox(_t("edit_select"), display_df[_t("col_id")], key=f"sel_{sheet_name}")
+                            
+                            # Retrieve the row from raw data based on ID
+                            curr_row = raw_df[raw_df["ID"] == edit_id].iloc[0]
+
+                            with st.form(f"edit_form_{sheet_name}"):
+                                new_note = st.text_input(_t("edit_note"), value=curr_row["Poznamka"])
+                                col_b1, col_b2 = st.columns(2)
+
+                                if col_b1.form_submit_button(_t("save_changes")):
+                                    raw_df.loc[raw_df["ID"] == edit_id, "Poznamka"] = new_note
+                                    raw_df.loc[raw_df["ID"] == edit_id, "Historie_Zmen"] = log_action(
+                                        curr_row["Historie_Zmen"], f"{_t('log_edited')} {new_note}"
+                                    )
+                                    conn.update(worksheet=sheet_name, data=raw_df)
+                                    st.success(_t("edited_ok"))
+                                    st.rerun()
+
+                                if col_b2.form_submit_button(_t("del_btn")):
+                                    raw_df.loc[raw_df["ID"] == edit_id, "Smazano"] = "ANO"
+                                    raw_df.loc[raw_df["ID"] == edit_id, "Historie_Zmen"] = log_action(
+                                        curr_row["Historie_Zmen"], _t("log_deleted")
+                                    )
+                                    conn.update(worksheet=sheet_name, data=raw_df)
+                                    st.warning(_t("deleted_ok"))
+                                    st.rerun()
             else:
-                st.info("Zadne aktivni zaznamy k zobrazeni.")
+                st.info(_t("no_records_all"))
         else:
-            st.info("Tabulka je zatim prazdna.")
-
-
-
-
-
-
+            st.info(_t("empty_table"))
