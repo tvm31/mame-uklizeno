@@ -10,16 +10,14 @@ st.set_page_config(page_title="Mame uklizeno", layout="wide", page_icon="🏠")
 
 # Connection
 # Ruční oprava klíče ze Secrets
-creds = dict(st.secrets["connections"]["gsheets"])
-# Odstraníme případné mezery a opravíme zalomení řádků
-raw_key = creds["private_key"]
-cleaned_key = raw_key.replace("\\n", "\n").strip()
-if "-----BEGIN PRIVATE KEY-----" not in cleaned_key:
-    cleaned_key = f"-----BEGIN PRIVATE KEY-----\n{cleaned_key}\n-----END PRIVATE KEY-----"
-creds["private_key"] = cleaned_key
+# 1. Načteme surový klíč ze secrets a opravíme mu ty konce řádků
+raw_key = st.secrets["connections"]["gsheets"]["private_key"]
+cleaned_key = raw_key.replace("\\n", "\n")
 
-# Připojení s opravenými údaji
-conn = st.connection("gsheets", type=GSheetsConnection, **creds)
+# 2. Vytvoříme připojení. Ostatní údaje si to vezme ze secrets automaticky, 
+# my jen přepíšeme ten private_key tím naším opraveným.
+conn = st.connection("gsheets", type=GSheetsConnection, private_key=cleaned_key)
+
 
 # Helper: Log action history
 def log_action(old_log, action):
@@ -134,6 +132,7 @@ for i, tab in enumerate(tabs):
                 st.info("Zadne aktivni zaznamy k zobrazeni.")
         else:
             st.info("Tabulka je zatim prazdna.")
+
 
 
 
