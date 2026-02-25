@@ -37,11 +37,8 @@ for i, tab in enumerate(tabs):
     sheet_name = "Schodiste" if i == 0 else "Snih"
     with tab:
         # 1. READ DATA
-        try:
-            raw_df = conn.read(worksheet=sheet_name, ttl=0)
-        except Exception as e:
-                    st.error(f"Technicka chyba: {e}")
-                    continue
+        raw_df = conn.read(worksheet=sheet_name, ttl=0)
+
 
         # 2. ADMIN: ADD NEW RECORD
         if admin_mode:
