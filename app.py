@@ -41,7 +41,6 @@ def log_action(old_log, action):
 with st.sidebar:
     selected_lang = st.selectbox("Jazyk / Language", ["CS", "EN"])
     
-    # Helper translation function
     def _t(key, fallback=None):
         if pd.isna(key) or not isinstance(key, str) or key == "":
             return key
@@ -50,7 +49,6 @@ with st.sidebar:
 
     st.title(_t("settings", "Nastavení"))
     
-    # Handle persistent login state
     if not st.session_state.admin_mode:
         with st.form("login_form"):
             pwd = st.text_input(_t("admin_pass", "Admin heslo"), type="password")
@@ -66,7 +64,6 @@ with st.sidebar:
             st.session_state.admin_mode = False
             st.rerun()
             
-    # --- SHARE APP QR CODE ---
     st.markdown("---")
     with st.expander(_t("share_app_title", "Sdílet aplikaci (QR)")):
         app_url = _t("app_url", APP_URL)
@@ -76,6 +73,73 @@ with st.sidebar:
 
 # --- MAIN UI ---
 st.title(f"🏠 {_t('app_title')}")
+
+# --- MESSAGE BOARD (NÁSTĚNKA) ---
+try:
+    zpravy_df = conn.read(worksheet="Zpravy", ttl=0)
+    
+    # Zobrazení aktivních zpráv všem uživatelům
+    if not zpravy_df.empty:
+        aktivni_zpravy = zpravy_df[zpravy_df["Smazano"] == "NE"]
+        dnes = datetime.now().date()
+        
+        for _, zprava in aktivni_zpravy.iterrows():
+            zobrazit = True
+            platnost = zprava["Platnost_Do"]
+            
+            # Kontrola platnosti (pokud je vyplněná)
+            if pd.notna(platnost) and str(platnost).strip() != "":
+                try:
+                    platnost_datum = pd.to_datetime(platnost).date()
+                    if dnes > platnost_datum:
+                        zobrazit = False
+                except:
+                    pass # Pokud je datum špatně zadané, raději zprávu ukážeme
+            
+            if zobrazit:
+                st.info(zprava["Text_Zpravy"])
+
+    # Admin rozhraní pro správu zpráv
+    if st.session_state.admin_mode:
+        with st.expander(f"🛠️ {_t('msg_board', 'Nástěnka (Správa)')}"):
+            # Přidání nové zprávy
+            with st.form("add_msg_form", clear_on_submit=True):
+                st.write(f"**{_t('msg_add', 'Přidat novou zprávu')}**")
+                novy_text = st.text_area(_t("msg_text", "Text zprávy"))
+                nova_platnost = st.date_input(_t("msg_valid_until", "Platnost do (nechte prázdné pro trvalou)"), value=None)
+                
+                if st.form_submit_button(_t("save_btn", "Uložit")):
+                    platnost_str = nova_platnost.isoformat() if nova_platnost else ""
+                    nova_zprava = {
+                        "ID": str(uuid.uuid4())[:8],
+                        "Text_Zpravy": novy_text,
+                        "Platnost_Do": platnost_str,
+                        "Smazano": "NE"
+                    }
+                    conn.update(worksheet="Zpravy", data=pd.concat([zpravy_df, pd.DataFrame([nova_zprava])], ignore_index=True))
+                    st.success(_t("msg_added", "Zpráva přidána!"))
+                    st.rerun()
+            
+            # Mazání zpráv
+            if not zpravy_df.empty:
+                aktivni_zpravy = zpravy_df[zpravy_df["Smazano"] == "NE"]
+                if not aktivni_zpravy.empty:
+                    st.markdown("---")
+                    smaz_id = st.selectbox(
+                        _t("msg_del", "Smazat zprávu"), 
+                        aktivni_zpravy["ID"], 
+                        format_func=lambda x: str(aktivni_zpravy[aktivni_zpravy["ID"] == x].iloc[0]["Text_Zpravy"])[:50] + "..."
+                    )
+                    if st.button(_t("del_btn", "SMAZAT ZÁZNAM"), key="del_msg"):
+                        zpravy_df.loc[zpravy_df["ID"] == smaz_id, "Smazano"] = "ANO"
+                        conn.update(worksheet="Zpravy", data=zpravy_df)
+                        st.warning(_t("deleted_ok", "Smazáno!"))
+                        st.rerun()
+
+except Exception as e:
+    if st.session_state.admin_mode:
+        st.warning("List 'Zpravy' nebyl v tabulce nalezen. Vytvořte jej pro zprovoznění Nástěnky.")
+
 st.markdown("---")
 
 tab_names = [_t("tab_stairs"), _t("tab_snow")]
@@ -171,7 +235,6 @@ for i, tab in enumerate(tabs):
 
                     display_df["Historie_Zmen"] = display_df["Historie_Zmen"].apply(translate_log)
 
-                    # Dynamic dictionary mapping for column names
                     rename_dict = {
                         "Datum_Provedeni": _t("col_date_done", "Datum provedení"),
                         "Datum_Zapisu": _t("col_date_saved", "Datum zápisu"),
@@ -182,28 +245,16 @@ for i, tab in enumerate(tabs):
                     }
                     display_df = display_df.rename(columns=rename_dict)
 
-                    # 1. Define columns to show PUBLICLY (History and Save Date are now for everyone)
                     cols_to_show = [rename_dict["Datum_Provedeni"]]
                     if sheet_name == "Snih":
                         cols_to_show.append(rename_dict["Typ_Udrzby"])
                     cols_to_show.extend([rename_dict["Poznamka"], rename_dict["Datum_Zapisu"], rename_dict["Historie_Zmen"]])
                     
-                    # 2. Dynamic widths formatting using st.column_config
-                    col_config = {
-                        rename_dict["Datum_Provedeni"]: st.column_config.TextColumn(width="small"),
-                        rename_dict["Poznamka"]: st.column_config.TextColumn(width="large"),
-                        rename_dict["Datum_Zapisu"]: st.column_config.TextColumn(width="small"),
-                        rename_dict["Historie_Zmen"]: st.column_config.TextColumn(width="medium"),
-                    }
-                    if sheet_name == "Snih":
-                        col_config[rename_dict["Typ_Udrzby"]] = st.column_config.TextColumn(width="medium")
-
-                    # Display the final configured dataframe (ID is completely omitted from the view)
+                    # Zcela odstraněno column_config, tabulka si šířku přizpůsobí dynamicky sama
                     st.dataframe(
                         display_df[cols_to_show], 
                         use_container_width=True, 
-                        hide_index=True,
-                        column_config=col_config
+                        hide_index=True
                     )
 
                     # ADMIN: EDIT / DELETE
