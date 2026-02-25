@@ -8,6 +8,9 @@ import urllib.parse
 # Configuration
 st.set_page_config(page_title="Mame uklizeno", layout="wide", page_icon="🏠")
 
+# ZDE VYPLŇ SVOU SKUTEČNOU ADRESU APLIKACE:
+APP_URL = "https://mame-uklizeno.streamlit.app" 
+
 # Initialize session state for admin authentication
 if "admin_mode" not in st.session_state:
     st.session_state.admin_mode = False
@@ -62,6 +65,14 @@ with st.sidebar:
         if st.button(_t("logout_btn", "Odhlásit / Logout")):
             st.session_state.admin_mode = False
             st.rerun()
+            
+    # --- SHARE APP QR CODE ---
+    st.markdown("---")
+    with st.expander(_t("share_app_title", "Sdílet aplikaci (QR)")):
+        # Generates a QR code linking directly to your Streamlit app URL
+        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={urllib.parse.quote(APP_URL)}&margin=10"
+        st.image(qr_url)
+        st.caption(_t("share_app_text", "Naskenujte kód pro otevření této aplikace v mobilu."))
 
 # --- MAIN UI ---
 st.title(f"🏠 {_t('app_title')}")
@@ -120,10 +131,8 @@ for i, tab in enumerate(tabs):
                 df_view["Datum_Provedeni"] = pd.to_datetime(df_view["Datum_Provedeni"])
                 df_view["Datum_Zapisu"] = pd.to_datetime(df_view["Datum_Zapisu"])
 
-                # Get correct chronological sorting for Billing Months
                 valid_dates = df_view["Datum_Provedeni"].dropna()
                 if not valid_dates.empty:
-                    # Convert to periods (YYYY-MM) and sort descending so newer months are first
                     temp_months = sorted(valid_dates.dt.to_period('M').unique(), reverse=True)
                     month_year_list = [m.strftime('%m/%Y') for m in temp_months]
                 else:
@@ -143,7 +152,6 @@ for i, tab in enumerate(tabs):
                 if df_view.empty:
                     st.info(_t("no_records_month", "Pro tento měsíc nejsou žádné záznamy."))
                 else:
-                    # Explicit descending sorting of records by Date Done and then Date Saved
                     display_df = df_view.sort_values(by=["Datum_Provedeni", "Datum_Zapisu"], ascending=[False, False]).copy()
                     
                     display_df["Datum_Provedeni"] = display_df["Datum_Provedeni"].dt.strftime('%d.%m.%Y')
@@ -152,7 +160,6 @@ for i, tab in enumerate(tabs):
                     if "Typ_Udrzby" in display_df.columns:
                         display_df["Typ_Udrzby"] = display_df["Typ_Udrzby"].apply(lambda x: _t(x))
 
-                    # Replace ID tags with actual translations for history logs
                     def translate_log(log_str):
                         if pd.isna(log_str) or not str(log_str).strip():
                             return log_str
@@ -180,28 +187,6 @@ for i, tab in enumerate(tabs):
                         cols_to_show = [rename_dict["Datum_Provedeni"], rename_dict["Datum_Zapisu"], rename_dict["Poznamka"], rename_dict["Historie_Zmen"], rename_dict["ID"]]
 
                     st.dataframe(display_df[cols_to_show], use_container_width=True, hide_index=True)
-
-                    # --- QR CODE SHARE EXPANDER ---
-                    with st.expander(_t("share_qr", "Sdílet záznam (QR kód)")):
-                        qr_id = st.selectbox(_t("select_qr", "Vyberte ID záznamu pro sdílení"), display_df[rename_dict["ID"]], key=f"qr_sel_{sheet_name}")
-                        if qr_id:
-                            qr_row = raw_df[raw_df["ID"] == qr_id].iloc[0]
-                            qr_date = pd.to_datetime(qr_row['Datum_Provedeni']).strftime('%d.%m.%Y')
-                            qr_typ = _t(qr_row['Typ_Udrzby']) if qr_row['Typ_Udrzby'] else ""
-                            qr_note = qr_row['Poznamka'] if pd.notna(qr_row['Poznamka']) else ""
-                            
-                            # Construct text that will be embedded inside the QR code
-                            qr_text = f"Máme uklizeno!\nÚsek: {tab_names[i]}\nDatum: {qr_date}"
-                            if qr_typ: qr_text += f"\nTyp: {qr_typ}"
-                            if qr_note: qr_text += f"\nPozn: {qr_note}"
-                            
-                            qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data={urllib.parse.quote(qr_text)}&margin=10"
-                            
-                            col1, col2 = st.columns([1, 3])
-                            with col1:
-                                st.image(qr_url)
-                            with col2:
-                                st.info("Naskenujte kód fotoaparátem v mobilu. Zobrazí se vám přesné detaily tohoto úklidu.")
 
                     # ADMIN: EDIT / DELETE
                     if st.session_state.admin_mode:
