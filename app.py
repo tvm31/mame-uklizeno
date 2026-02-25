@@ -22,7 +22,7 @@ def log_action(old_log, action):
 # --- AUTHENTICATION ---
 with st.sidebar:
     st.title("Nastaveni")
-    admin_mode = st.password_input("Admin heslo", type="password") == "mojeheslo123"
+    admin_mode = st.text_input("Admin heslo", type="password") == "mojeheslo123"
     if admin_mode:
         st.success("Jste v rezimu spravce")
 
@@ -124,3 +124,4 @@ for i, tab in enumerate(tabs):
                 st.info("Zadne aktivni zaznamy k zobrazeni.")
         else:
             st.info("Tabulka je zatim prazdna.")
+
