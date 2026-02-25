@@ -38,9 +38,9 @@ for i, tab in enumerate(tabs):
         # 1. READ DATA
         try:
             raw_df = conn.read(worksheet=sheet_name, ttl=0)
-        except:
-            st.error(f"Nepodarilo se nacist list '{sheet_name}'. Zkontrolujte Google Tabulku.")
-            continue
+        except Exception as e:
+                    st.error(f"Technicka chyba: {e}")
+                    continue
 
         # 2. ADMIN: ADD NEW RECORD
         if admin_mode:
@@ -124,4 +124,5 @@ for i, tab in enumerate(tabs):
                 st.info("Zadne aktivni zaznamy k zobrazeni.")
         else:
             st.info("Tabulka je zatim prazdna.")
+
 
