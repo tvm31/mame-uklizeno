@@ -8,6 +8,9 @@ import urllib.parse
 # Configuration
 st.set_page_config(page_title="Mame uklizeno", layout="wide", page_icon="🏠")
 
+# ZDE VYPLŇ SVOU SKUTEČNOU ADRESU APLIKACE:
+APP_URL = "https://mame-uklizeno.streamlit.app" 
+
 # Initialize session state for admin authentication
 if "admin_mode" not in st.session_state:
     st.session_state.admin_mode = False
@@ -47,7 +50,7 @@ with st.sidebar:
 
     st.title(_t("settings", "Nastavení"))
     
-    # Handle persistent login state with a proper form/button for mobile
+    # Handle persistent login state
     if not st.session_state.admin_mode:
         with st.form("login_form"):
             pwd = st.text_input(_t("admin_pass", "Admin heslo"), type="password")
@@ -66,10 +69,7 @@ with st.sidebar:
     # --- SHARE APP QR CODE ---
     st.markdown("---")
     with st.expander(_t("share_app_title", "Sdílet aplikaci (QR)")):
-        # Dynamically fetch URL from the dictionary (with a fallback)
-        app_url = _t("app_url", "https://mame-uklizeno.streamlit.app")
-        
-        # Generate QR code
+        app_url = _t("app_url", APP_URL)
         qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={urllib.parse.quote(app_url)}&margin=10"
         st.image(qr_url)
         st.caption(_t("share_app_text", "Naskenujte kód pro otevření této aplikace v mobilu."))
@@ -171,6 +171,7 @@ for i, tab in enumerate(tabs):
 
                     display_df["Historie_Zmen"] = display_df["Historie_Zmen"].apply(translate_log)
 
+                    # Dynamic dictionary mapping for column names
                     rename_dict = {
                         "Datum_Provedeni": _t("col_date_done", "Datum provedení"),
                         "Datum_Zapisu": _t("col_date_saved", "Datum zápisu"),
@@ -181,17 +182,48 @@ for i, tab in enumerate(tabs):
                     }
                     display_df = display_df.rename(columns=rename_dict)
 
+                    # 1. Define columns to show PUBLICLY (History and Save Date are now for everyone)
+                    cols_to_show = [rename_dict["Datum_Provedeni"]]
                     if sheet_name == "Snih":
-                        cols_to_show = [rename_dict["Datum_Provedeni"], rename_dict["Datum_Zapisu"], rename_dict["Typ_Udrzby"], rename_dict["Poznamka"], rename_dict["Historie_Zmen"], rename_dict["ID"]]
-                    else:
-                        cols_to_show = [rename_dict["Datum_Provedeni"], rename_dict["Datum_Zapisu"], rename_dict["Poznamka"], rename_dict["Historie_Zmen"], rename_dict["ID"]]
+                        cols_to_show.append(rename_dict["Typ_Udrzby"])
+                    cols_to_show.extend([rename_dict["Poznamka"], rename_dict["Datum_Zapisu"], rename_dict["Historie_Zmen"]])
+                    
+                    # 2. Dynamic widths formatting using st.column_config
+                    col_config = {
+                        rename_dict["Datum_Provedeni"]: st.column_config.TextColumn(width="small"),
+                        rename_dict["Poznamka"]: st.column_config.TextColumn(width="large"),
+                        rename_dict["Datum_Zapisu"]: st.column_config.TextColumn(width="small"),
+                        rename_dict["Historie_Zmen"]: st.column_config.TextColumn(width="medium"),
+                    }
+                    if sheet_name == "Snih":
+                        col_config[rename_dict["Typ_Udrzby"]] = st.column_config.TextColumn(width="medium")
 
-                    st.dataframe(display_df[cols_to_show], use_container_width=True, hide_index=True)
+                    # Display the final configured dataframe (ID is completely omitted from the view)
+                    st.dataframe(
+                        display_df[cols_to_show], 
+                        use_container_width=True, 
+                        hide_index=True,
+                        column_config=col_config
+                    )
 
                     # ADMIN: EDIT / DELETE
                     if st.session_state.admin_mode:
                         with st.expander(_t("edit_expand", "Upravit / Smazat existující záznam")):
-                            edit_id = st.selectbox(_t("edit_select", "Vyberte ID záznamu pro úpravu"), display_df[rename_dict["ID"]], key=f"sel_{sheet_name}")
+                            
+                            def format_record(r_id):
+                                row = display_df[display_df[rename_dict["ID"]] == r_id].iloc[0]
+                                d_str = row[rename_dict["Datum_Provedeni"]]
+                                n_str = row[rename_dict["Poznamka"]]
+                                n_short = f" - {n_str[:30]}..." if pd.notna(n_str) and len(str(n_str)) > 0 else ""
+                                return f"{d_str}{n_short} (ID: {r_id})"
+
+                            edit_id = st.selectbox(
+                                _t("edit_select", "Vyberte ID záznamu pro úpravu"), 
+                                display_df[rename_dict["ID"]], 
+                                format_func=format_record,
+                                key=f"sel_{sheet_name}"
+                            )
+                            
                             curr_row = raw_df[raw_df["ID"] == edit_id].iloc[0]
 
                             with st.form(f"edit_form_{sheet_name}"):
