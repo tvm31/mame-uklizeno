@@ -4,31 +4,25 @@ import pandas as pd
 from datetime import datetime
 import uuid
 
-# Page configuration
-st.set_page_config(page_title="App", layout="wide", page_icon="🏠")
+# Configuration
+# (Popisky a komentare pisu v anglictine, jak jsi driv zminoval)
+st.set_page_config(page_title="Mame uklizeno", layout="wide", page_icon="🏠")
 
-# Load and fix the private key from secrets
-raw_key = st.secrets["connections"]["gsheets"]["p_key"]
-fixed_key = raw_key.replace("\\n", "\n")
+# 1. CONNECTION (Clean connection that worked for you)
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Create connection
-conn = st.connection("gsheets", type=GSheetsConnection, private_key=fixed_key)
-
-# Load dictionary data
+# 2. LOAD DICTIONARY
 try:
-    # Read the dictionary sheet, cache it for performance
     dict_df = conn.read(worksheet="Slovnik", ttl=60)
-    
-    # Create a mapping dictionary for fast lookups
     translations = {}
     for lang in ["CS", "EN"]:
         if lang in dict_df.columns:
             translations[lang] = dict_df.set_index("Klic")[lang].to_dict()
 except Exception as e:
-    st.error("Dictionary could not be loaded. Please check 'Slovnik' sheet.")
+    st.error("Nepodarilo se nacist list 'Slovnik'. Zkontrolujte tabulku.")
     st.stop()
 
-# Helper function to append action history
+# Helper: Log action history
 def log_action(old_log, action):
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
     new_entry = f"[{now}] {action}"
@@ -36,9 +30,8 @@ def log_action(old_log, action):
         return new_entry
     return f"{new_entry}\n{old_log}"
 
-# --- SIDEBAR: AUTHENTICATION & LANGUAGE ---
+# --- AUTHENTICATION & LANGUAGE ---
 with st.sidebar:
-    # Language selector
     selected_lang = st.selectbox("Jazyk / Language", ["CS", "EN"])
     
     # Helper translation function
@@ -58,18 +51,17 @@ tab_names = [_t("tab_stairs"), _t("tab_snow")]
 tabs = st.tabs(tab_names)
 
 for i, tab in enumerate(tabs):
-    # Keep underlying sheet names constant for API calls
     sheet_name = "Schodiste" if i == 0 else "Snih"
     
     with tab:
-        # 1. READ DATA
+        # READ DATA
         try:
             raw_df = conn.read(worksheet=sheet_name, ttl=0)
         except Exception as e:
-            st.error("Data error.")
+            st.error("Chyba pri nacitani dat z tabulky.")
             continue
 
-        # 2. ADMIN: ADD NEW RECORD
+        # ADMIN: ADD NEW RECORD
         if admin_mode:
             with st.expander(f"{_t('new_record')} {tab_names[i]}"):
                 with st.form(f"form_add_{sheet_name}", clear_on_submit=True):
@@ -90,25 +82,22 @@ for i, tab in enumerate(tabs):
                             "Historie_Zmen": log_action("", _t("log_created")),
                             "Smazano": "NE"
                         }
-                        # Convert to DataFrame and push to Google Sheets
                         new_row_df = pd.DataFrame([new_row])
                         updated_df = pd.concat([raw_df, new_row_df], ignore_index=True)
                         conn.update(worksheet=sheet_name, data=updated_df)
                         st.success(_t("saved_ok"))
                         st.rerun()
 
-        # 3. DISPLAY & FILTERS
+        # DISPLAY & FILTERS
         st.subheader(_t("overview"))
         
         if not raw_df.empty:
             df_view = raw_df[raw_df["Smazano"] == "NE"].copy()
             
             if not df_view.empty:
-                # Convert dates to datetime objects for filtering
                 df_view["Datum_Provedeni"] = pd.to_datetime(df_view["Datum_Provedeni"])
                 df_view["Datum_Zapisu"] = pd.to_datetime(df_view["Datum_Zapisu"])
 
-                # Create dropdown options for billing months
                 month_year_list = df_view["Datum_Provedeni"].dt.strftime('%m/%Y').unique().tolist()
                 month_year_list = sorted(month_year_list, reverse=True)
                 filter_options = [_t("show_all")] + month_year_list
@@ -119,21 +108,16 @@ for i, tab in enumerate(tabs):
                     key=f"filter_{sheet_name}"
                 )
 
-                # Filter dataframe by selected month
                 if selected_month != _t("show_all"):
                     df_view = df_view[df_view["Datum_Provedeni"].dt.strftime('%m/%Y') == selected_month]
 
                 if df_view.empty:
                     st.info(_t("no_records_month"))
                 else:
-                    # Sort records from newest to oldest
                     display_df = df_view.sort_values("Datum_Provedeni", ascending=False).copy()
-                    
-                    # Format dates for presentation
                     display_df["Datum_Provedeni"] = display_df["Datum_Provedeni"].dt.strftime('%d.%m.%Y')
                     display_df["Datum_Zapisu"] = display_df["Datum_Zapisu"].dt.strftime('%d.%m.%Y')
 
-                    # Translate column names using the dictionary
                     rename_dict = {
                         "Datum_Provedeni": _t("col_date_done"),
                         "Datum_Zapisu": _t("col_date_saved"),
@@ -144,21 +128,17 @@ for i, tab in enumerate(tabs):
                     }
                     display_df = display_df.rename(columns=rename_dict)
 
-                    # Dynamic column selection based on active tab
                     if sheet_name == "Snih":
                         cols_to_show = [_t("col_date_done"), _t("col_date_saved"), _t("maint_type"), _t("note"), _t("col_history"), _t("col_id")]
                     else:
                         cols_to_show = [_t("col_date_done"), _t("col_date_saved"), _t("note"), _t("col_history"), _t("col_id")]
 
-                    # Render table
                     st.dataframe(display_df[cols_to_show], use_container_width=True, hide_index=True)
 
-                    # 4. ADMIN: EDIT / DELETE
+                    # ADMIN: EDIT / DELETE
                     if admin_mode:
                         with st.expander(_t("edit_expand")):
                             edit_id = st.selectbox(_t("edit_select"), display_df[_t("col_id")], key=f"sel_{sheet_name}")
-                            
-                            # Retrieve the row from raw data based on ID
                             curr_row = raw_df[raw_df["ID"] == edit_id].iloc[0]
 
                             with st.form(f"edit_form_{sheet_name}"):
