@@ -9,14 +9,12 @@ import uuid
 st.set_page_config(page_title="Mame uklizeno", layout="wide", page_icon="🏠")
 
 # Connection
-# Ruční oprava klíče ze Secrets
-# 1. Načteme surový klíč ze secrets a opravíme mu ty konce řádků
-raw_key = st.secrets["connections"]["gsheets"]["private_key"]
-cleaned_key = raw_key.replace("\\n", "\n")
+# Načtení klíče z p_key a oprava lomítek
+raw_key = st.secrets["connections"]["gsheets"]["p_key"]
+fixed_key = raw_key.replace("\\n", "\n")
 
-# 2. Vytvoříme připojení. Ostatní údaje si to vezme ze secrets automaticky, 
-# my jen přepíšeme ten private_key tím naším opraveným.
-conn = st.connection("gsheets", type=GSheetsConnection, private_key=cleaned_key)
+# Připojení (private_key posíláme ručně, zbytek se načte ze secrets sám)
+conn = st.connection("gsheets", type=GSheetsConnection, private_key=fixed_key)
 
 
 # Helper: Log action history
@@ -132,6 +130,7 @@ for i, tab in enumerate(tabs):
                 st.info("Zadne aktivni zaznamy k zobrazeni.")
         else:
             st.info("Tabulka je zatim prazdna.")
+
 
 
 
