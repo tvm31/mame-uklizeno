@@ -8,9 +8,6 @@ import urllib.parse
 # Configuration
 st.set_page_config(page_title="Mame uklizeno", layout="wide", page_icon="🏠")
 
-# ZDE VYPLŇ SVOU SKUTEČNOU ADRESU APLIKACE:
-APP_URL = "https://mame-uklizeno.streamlit.app" 
-
 # Initialize session state for admin authentication
 if "admin_mode" not in st.session_state:
     st.session_state.admin_mode = False
@@ -69,8 +66,11 @@ with st.sidebar:
     # --- SHARE APP QR CODE ---
     st.markdown("---")
     with st.expander(_t("share_app_title", "Sdílet aplikaci (QR)")):
-        # Generates a QR code linking directly to your Streamlit app URL
-        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={urllib.parse.quote(APP_URL)}&margin=10"
+        # Dynamically fetch URL from the dictionary (with a fallback)
+        app_url = _t("app_url", "https://mame-uklizeno.streamlit.app")
+        
+        # Generate QR code
+        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={urllib.parse.quote(app_url)}&margin=10"
         st.image(qr_url)
         st.caption(_t("share_app_text", "Naskenujte kód pro otevření této aplikace v mobilu."))
 
