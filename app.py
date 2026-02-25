@@ -3,11 +3,12 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
 import uuid
+import urllib.parse
 
 # Configuration
 st.set_page_config(page_title="Mame uklizeno", layout="wide", page_icon="🏠")
 
-# Initialize session state for admin authentication to prevent logout on rerun
+# Initialize session state for admin authentication
 if "admin_mode" not in st.session_state:
     st.session_state.admin_mode = False
 
@@ -38,22 +39,27 @@ with st.sidebar:
     selected_lang = st.selectbox("Jazyk / Language", ["CS", "EN"])
     
     # Helper translation function
-    def _t(key):
+    def _t(key, fallback=None):
         if pd.isna(key) or not isinstance(key, str) or key == "":
             return key
-        return translations.get(selected_lang, {}).get(key, key)
+        val = translations.get(selected_lang, {}).get(key, key)
+        return val if val != key else (fallback if fallback else key)
 
-    st.title(_t("settings"))
+    st.title(_t("settings", "Nastavení"))
     
-    # Handle persistent login state
+    # Handle persistent login state with a proper form/button for mobile
     if not st.session_state.admin_mode:
-        pwd = st.text_input(_t("admin_pass"), type="password")
-        if pwd == "mojeheslo123":
-            st.session_state.admin_mode = True
-            st.rerun()
+        with st.form("login_form"):
+            pwd = st.text_input(_t("admin_pass", "Admin heslo"), type="password")
+            if st.form_submit_button(_t("login_btn", "Přihlásit / Login")):
+                if pwd == "mojeheslo123":
+                    st.session_state.admin_mode = True
+                    st.rerun()
+                else:
+                    st.error("Chybné heslo" if selected_lang == "CS" else "Wrong password")
     else:
-        st.success(_t("admin_ok"))
-        if st.button("Odhlásit / Logout"):
+        st.success(_t("admin_ok", "Jste v režimu správce"))
+        if st.button(_t("logout_btn", "Odhlásit / Logout")):
             st.session_state.admin_mode = False
             st.rerun()
 
@@ -105,7 +111,7 @@ for i, tab in enumerate(tabs):
                         st.rerun()
 
         # DISPLAY & FILTERS
-        st.subheader(_t("overview"))
+        st.subheader(_t("overview", "Přehled provedených prací"))
         
         if not raw_df.empty:
             df_view = raw_df[raw_df["Smazano"] == "NE"].copy()
@@ -114,23 +120,32 @@ for i, tab in enumerate(tabs):
                 df_view["Datum_Provedeni"] = pd.to_datetime(df_view["Datum_Provedeni"])
                 df_view["Datum_Zapisu"] = pd.to_datetime(df_view["Datum_Zapisu"])
 
-                month_year_list = df_view["Datum_Provedeni"].dt.strftime('%m/%Y').unique().tolist()
-                month_year_list = sorted(month_year_list, reverse=True)
-                filter_options = [_t("show_all")] + month_year_list
+                # Get correct chronological sorting for Billing Months
+                valid_dates = df_view["Datum_Provedeni"].dropna()
+                if not valid_dates.empty:
+                    # Convert to periods (YYYY-MM) and sort descending so newer months are first
+                    temp_months = sorted(valid_dates.dt.to_period('M').unique(), reverse=True)
+                    month_year_list = [m.strftime('%m/%Y') for m in temp_months]
+                else:
+                    month_year_list = []
+
+                filter_options = [_t("show_all", "Zobrazit vše")] + month_year_list
 
                 selected_month = st.selectbox(
-                    _t("billing_month"), 
+                    _t("billing_month", "Fakturační měsíc:"), 
                     filter_options, 
                     key=f"filter_{sheet_name}"
                 )
 
-                if selected_month != _t("show_all"):
+                if selected_month != _t("show_all", "Zobrazit vše"):
                     df_view = df_view[df_view["Datum_Provedeni"].dt.strftime('%m/%Y') == selected_month]
 
                 if df_view.empty:
-                    st.info(_t("no_records_month"))
+                    st.info(_t("no_records_month", "Pro tento měsíc nejsou žádné záznamy."))
                 else:
-                    display_df = df_view.sort_values("Datum_Provedeni", ascending=False).copy()
+                    # Explicit descending sorting of records by Date Done and then Date Saved
+                    display_df = df_view.sort_values(by=["Datum_Provedeni", "Datum_Zapisu"], ascending=[False, False]).copy()
+                    
                     display_df["Datum_Provedeni"] = display_df["Datum_Provedeni"].dt.strftime('%d.%m.%Y')
                     display_df["Datum_Zapisu"] = display_df["Datum_Zapisu"].dt.strftime('%d.%m.%Y')
 
@@ -144,56 +159,78 @@ for i, tab in enumerate(tabs):
                         text = str(log_str)
                         tags = ["log_created", "log_edited", "log_deleted"]
                         for tag in tags:
-                            text = text.replace(f"[[{tag}]]", _t(tag))
+                            text = text.replace(f"[[{tag}]]", _t(tag, tag))
                         return text
 
                     display_df["Historie_Zmen"] = display_df["Historie_Zmen"].apply(translate_log)
 
                     rename_dict = {
-                        "Datum_Provedeni": _t("col_date_done"),
-                        "Datum_Zapisu": _t("col_date_saved"),
-                        "Typ_Udrzby": _t("maint_type"),
-                        "Poznamka": _t("note"),
-                        "Historie_Zmen": _t("col_history"),
-                        "ID": _t("col_id")
+                        "Datum_Provedeni": _t("col_date_done", "Datum provedení"),
+                        "Datum_Zapisu": _t("col_date_saved", "Datum zápisu"),
+                        "Typ_Udrzby": _t("maint_type", "Typ údržby"),
+                        "Poznamka": _t("note", "Poznámka"),
+                        "Historie_Zmen": _t("col_history", "Historie změn"),
+                        "ID": _t("col_id", "ID Záznamu")
                     }
                     display_df = display_df.rename(columns=rename_dict)
 
                     if sheet_name == "Snih":
-                        cols_to_show = [_t("col_date_done"), _t("col_date_saved"), _t("maint_type"), _t("note"), _t("col_history"), _t("col_id")]
+                        cols_to_show = [rename_dict["Datum_Provedeni"], rename_dict["Datum_Zapisu"], rename_dict["Typ_Udrzby"], rename_dict["Poznamka"], rename_dict["Historie_Zmen"], rename_dict["ID"]]
                     else:
-                        cols_to_show = [_t("col_date_done"), _t("col_date_saved"), _t("note"), _t("col_history"), _t("col_id")]
+                        cols_to_show = [rename_dict["Datum_Provedeni"], rename_dict["Datum_Zapisu"], rename_dict["Poznamka"], rename_dict["Historie_Zmen"], rename_dict["ID"]]
 
                     st.dataframe(display_df[cols_to_show], use_container_width=True, hide_index=True)
 
+                    # --- QR CODE SHARE EXPANDER ---
+                    with st.expander(_t("share_qr", "Sdílet záznam (QR kód)")):
+                        qr_id = st.selectbox(_t("select_qr", "Vyberte ID záznamu pro sdílení"), display_df[rename_dict["ID"]], key=f"qr_sel_{sheet_name}")
+                        if qr_id:
+                            qr_row = raw_df[raw_df["ID"] == qr_id].iloc[0]
+                            qr_date = pd.to_datetime(qr_row['Datum_Provedeni']).strftime('%d.%m.%Y')
+                            qr_typ = _t(qr_row['Typ_Udrzby']) if qr_row['Typ_Udrzby'] else ""
+                            qr_note = qr_row['Poznamka'] if pd.notna(qr_row['Poznamka']) else ""
+                            
+                            # Construct text that will be embedded inside the QR code
+                            qr_text = f"Máme uklizeno!\nÚsek: {tab_names[i]}\nDatum: {qr_date}"
+                            if qr_typ: qr_text += f"\nTyp: {qr_typ}"
+                            if qr_note: qr_text += f"\nPozn: {qr_note}"
+                            
+                            qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data={urllib.parse.quote(qr_text)}&margin=10"
+                            
+                            col1, col2 = st.columns([1, 3])
+                            with col1:
+                                st.image(qr_url)
+                            with col2:
+                                st.info("Naskenujte kód fotoaparátem v mobilu. Zobrazí se vám přesné detaily tohoto úklidu.")
+
                     # ADMIN: EDIT / DELETE
                     if st.session_state.admin_mode:
-                        with st.expander(_t("edit_expand")):
-                            edit_id = st.selectbox(_t("edit_select"), display_df[_t("col_id")], key=f"sel_{sheet_name}")
+                        with st.expander(_t("edit_expand", "Upravit / Smazat existující záznam")):
+                            edit_id = st.selectbox(_t("edit_select", "Vyberte ID záznamu pro úpravu"), display_df[rename_dict["ID"]], key=f"sel_{sheet_name}")
                             curr_row = raw_df[raw_df["ID"] == edit_id].iloc[0]
 
                             with st.form(f"edit_form_{sheet_name}"):
-                                new_note = st.text_input(_t("edit_note"), value=curr_row["Poznamka"])
+                                new_note = st.text_input(_t("edit_note", "Upravit poznámku"), value=curr_row["Poznamka"])
                                 col_b1, col_b2 = st.columns(2)
 
-                                if col_b1.form_submit_button(_t("save_changes")):
+                                if col_b1.form_submit_button(_t("save_changes", "Uložit změny")):
                                     raw_df.loc[raw_df["ID"] == edit_id, "Poznamka"] = new_note
                                     raw_df.loc[raw_df["ID"] == edit_id, "Historie_Zmen"] = log_action(
                                         curr_row["Historie_Zmen"], f"[[log_edited]] {new_note}"
                                     )
                                     conn.update(worksheet=sheet_name, data=raw_df)
-                                    st.success(_t("edited_ok"))
+                                    st.success(_t("edited_ok", "Upraveno!"))
                                     st.rerun()
 
-                                if col_b2.form_submit_button(_t("del_btn")):
+                                if col_b2.form_submit_button(_t("del_btn", "SMAZAT ZÁZNAM")):
                                     raw_df.loc[raw_df["ID"] == edit_id, "Smazano"] = "ANO"
                                     raw_df.loc[raw_df["ID"] == edit_id, "Historie_Zmen"] = log_action(
                                         curr_row["Historie_Zmen"], "[[log_deleted]]"
                                     )
                                     conn.update(worksheet=sheet_name, data=raw_df)
-                                    st.warning(_t("deleted_ok"))
+                                    st.warning(_t("deleted_ok", "Smazáno!"))
                                     st.rerun()
             else:
-                st.info(_t("no_records_all"))
+                st.info(_t("no_records_all", "Zatím nebyly provedeny žádné práce."))
         else:
-            st.info(_t("empty_table"))
+            st.info(_t("empty_table", "Tabulka je zatím prázdná."))
