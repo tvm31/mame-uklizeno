@@ -7,7 +7,7 @@ import uuid
 # Configuration
 st.set_page_config(page_title="Mame uklizeno", layout="wide", page_icon="🏠")
 
-# 1. CONNECTION 
+# 1. CONNECTION
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # 2. LOAD DICTIONARY
@@ -22,9 +22,9 @@ except Exception as e:
     st.stop()
 
 # Helper: Log action history
-def log_action(old_log, action):
+def log_action(old_log, action_key):
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
-    new_entry = f"[{now}] {action}"
+    new_entry = f"[{now}] {action_key}"
     if pd.isna(old_log) or str(old_log).strip() == "":
         return new_entry
     return f"{new_entry}\n{old_log}"
@@ -33,9 +33,8 @@ def log_action(old_log, action):
 with st.sidebar:
     selected_lang = st.selectbox("Jazyk / Language", ["CS", "EN"])
     
-    # Helper translation function (improved to handle empty values safely)
     def _t(key):
-        if not isinstance(key, str) or key == "":
+        if pd.isna(key) or not isinstance(key, str) or key == "":
             return key
         return translations.get(selected_lang, {}).get(key, key)
 
@@ -69,7 +68,6 @@ for i, tab in enumerate(tabs):
                     d_prov = st.date_input(_t("date_done"), value=None)
                     u_typ = None
                     if sheet_name == "Snih":
-                        # We use raw keys for database, but translate them for display
                         typ_options = ["Bezna udrzba", "Ztizena udrzba"]
                         u_typ = st.selectbox(_t("maint_type"), typ_options, format_func=lambda x: _t(x))
                     
@@ -83,7 +81,7 @@ for i, tab in enumerate(tabs):
                             "Datum_Zapisu": datetime.now().date().isoformat(),
                             "Typ_Udrzby": u_typ if u_typ else "",
                             "Poznamka": note,
-                            "Historie_Zmen": log_action("", _t("log_created")),
+                            "Historie_Zmen": log_action("", "log_created"),
                             "Smazano": "NE"
                         }
                         new_row_df = pd.DataFrame([new_row])
@@ -122,9 +120,28 @@ for i, tab in enumerate(tabs):
                     display_df["Datum_Provedeni"] = display_df["Datum_Provedeni"].dt.strftime('%d.%m.%Y')
                     display_df["Datum_Zapisu"] = display_df["Datum_Zapisu"].dt.strftime('%d.%m.%Y')
 
-                    # Translate database values inside the "Typ_Udrzby" column before showing
                     if "Typ_Udrzby" in display_df.columns:
                         display_df["Typ_Udrzby"] = display_df["Typ_Udrzby"].apply(lambda x: _t(x))
+
+                    # NEW: Dynamic translation for history logs
+                    def translate_log(log_str):
+                        if pd.isna(log_str) or not str(log_str).strip():
+                            return log_str
+                        lines = str(log_str).split('\n')
+                        out = []
+                        for line in lines:
+                            if "] " in line:
+                                ts, action = line.split("] ", 1)
+                                if action.startswith("log_edited|"):
+                                    note_text = action.split("|", 1)[1]
+                                    out.append(f"{ts}] {_t('log_edited')} {note_text}")
+                                else:
+                                    out.append(f"{ts}] {_t(action)}")
+                            else:
+                                out.append(line)
+                        return "\n".join(out)
+
+                    display_df["Historie_Zmen"] = display_df["Historie_Zmen"].apply(translate_log)
 
                     rename_dict = {
                         "Datum_Provedeni": _t("col_date_done"),
@@ -156,7 +173,7 @@ for i, tab in enumerate(tabs):
                                 if col_b1.form_submit_button(_t("save_changes")):
                                     raw_df.loc[raw_df["ID"] == edit_id, "Poznamka"] = new_note
                                     raw_df.loc[raw_df["ID"] == edit_id, "Historie_Zmen"] = log_action(
-                                        curr_row["Historie_Zmen"], f"{_t('log_edited')} {new_note}"
+                                        curr_row["Historie_Zmen"], f"log_edited|{new_note}"
                                     )
                                     conn.update(worksheet=sheet_name, data=raw_df)
                                     st.success(_t("edited_ok"))
@@ -165,7 +182,7 @@ for i, tab in enumerate(tabs):
                                 if col_b2.form_submit_button(_t("del_btn")):
                                     raw_df.loc[raw_df["ID"] == edit_id, "Smazano"] = "ANO"
                                     raw_df.loc[raw_df["ID"] == edit_id, "Historie_Zmen"] = log_action(
-                                        curr_row["Historie_Zmen"], _t("log_deleted")
+                                        curr_row["Historie_Zmen"], "log_deleted"
                                     )
                                     conn.update(worksheet=sheet_name, data=raw_df)
                                     st.warning(_t("deleted_ok"))
