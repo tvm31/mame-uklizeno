@@ -7,6 +7,10 @@ import uuid
 # Configuration
 st.set_page_config(page_title="Mame uklizeno", layout="wide", page_icon="🏠")
 
+# Initialize session state for admin authentication to prevent logout on rerun
+if "admin_mode" not in st.session_state:
+    st.session_state.admin_mode = False
+
 # 1. CONNECTION
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -22,9 +26,9 @@ except Exception as e:
     st.stop()
 
 # Helper: Log action history
-def log_action(old_log, action_key):
+def log_action(old_log, action):
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
-    new_entry = f"[{now}] {action_key}"
+    new_entry = f"[{now}] {action}"
     if pd.isna(old_log) or str(old_log).strip() == "":
         return new_entry
     return f"{new_entry}\n{old_log}"
@@ -33,15 +37,25 @@ def log_action(old_log, action_key):
 with st.sidebar:
     selected_lang = st.selectbox("Jazyk / Language", ["CS", "EN"])
     
+    # Helper translation function
     def _t(key):
         if pd.isna(key) or not isinstance(key, str) or key == "":
             return key
         return translations.get(selected_lang, {}).get(key, key)
 
     st.title(_t("settings"))
-    admin_mode = st.text_input(_t("admin_pass"), type="password") == "mojeheslo123"
-    if admin_mode:
+    
+    # Handle persistent login state
+    if not st.session_state.admin_mode:
+        pwd = st.text_input(_t("admin_pass"), type="password")
+        if pwd == "mojeheslo123":
+            st.session_state.admin_mode = True
+            st.rerun()
+    else:
         st.success(_t("admin_ok"))
+        if st.button("Odhlásit / Logout"):
+            st.session_state.admin_mode = False
+            st.rerun()
 
 # --- MAIN UI ---
 st.title(f"🏠 {_t('app_title')}")
@@ -62,7 +76,7 @@ for i, tab in enumerate(tabs):
             continue
 
         # ADMIN: ADD NEW RECORD
-        if admin_mode:
+        if st.session_state.admin_mode:
             with st.expander(f"{_t('new_record')} {tab_names[i]}"):
                 with st.form(f"form_add_{sheet_name}", clear_on_submit=True):
                     d_prov = st.date_input(_t("date_done"), value=None)
@@ -81,7 +95,7 @@ for i, tab in enumerate(tabs):
                             "Datum_Zapisu": datetime.now().date().isoformat(),
                             "Typ_Udrzby": u_typ if u_typ else "",
                             "Poznamka": note,
-                            "Historie_Zmen": log_action("", "log_created"),
+                            "Historie_Zmen": log_action("", "[[log_created]]"),
                             "Smazano": "NE"
                         }
                         new_row_df = pd.DataFrame([new_row])
@@ -123,23 +137,15 @@ for i, tab in enumerate(tabs):
                     if "Typ_Udrzby" in display_df.columns:
                         display_df["Typ_Udrzby"] = display_df["Typ_Udrzby"].apply(lambda x: _t(x))
 
-                    # NEW: Dynamic translation for history logs
+                    # Replace ID tags with actual translations for history logs
                     def translate_log(log_str):
                         if pd.isna(log_str) or not str(log_str).strip():
                             return log_str
-                        lines = str(log_str).split('\n')
-                        out = []
-                        for line in lines:
-                            if "] " in line:
-                                ts, action = line.split("] ", 1)
-                                if action.startswith("log_edited|"):
-                                    note_text = action.split("|", 1)[1]
-                                    out.append(f"{ts}] {_t('log_edited')} {note_text}")
-                                else:
-                                    out.append(f"{ts}] {_t(action)}")
-                            else:
-                                out.append(line)
-                        return "\n".join(out)
+                        text = str(log_str)
+                        tags = ["log_created", "log_edited", "log_deleted"]
+                        for tag in tags:
+                            text = text.replace(f"[[{tag}]]", _t(tag))
+                        return text
 
                     display_df["Historie_Zmen"] = display_df["Historie_Zmen"].apply(translate_log)
 
@@ -161,7 +167,7 @@ for i, tab in enumerate(tabs):
                     st.dataframe(display_df[cols_to_show], use_container_width=True, hide_index=True)
 
                     # ADMIN: EDIT / DELETE
-                    if admin_mode:
+                    if st.session_state.admin_mode:
                         with st.expander(_t("edit_expand")):
                             edit_id = st.selectbox(_t("edit_select"), display_df[_t("col_id")], key=f"sel_{sheet_name}")
                             curr_row = raw_df[raw_df["ID"] == edit_id].iloc[0]
@@ -173,7 +179,7 @@ for i, tab in enumerate(tabs):
                                 if col_b1.form_submit_button(_t("save_changes")):
                                     raw_df.loc[raw_df["ID"] == edit_id, "Poznamka"] = new_note
                                     raw_df.loc[raw_df["ID"] == edit_id, "Historie_Zmen"] = log_action(
-                                        curr_row["Historie_Zmen"], f"log_edited|{new_note}"
+                                        curr_row["Historie_Zmen"], f"[[log_edited]] {new_note}"
                                     )
                                     conn.update(worksheet=sheet_name, data=raw_df)
                                     st.success(_t("edited_ok"))
@@ -182,7 +188,7 @@ for i, tab in enumerate(tabs):
                                 if col_b2.form_submit_button(_t("del_btn")):
                                     raw_df.loc[raw_df["ID"] == edit_id, "Smazano"] = "ANO"
                                     raw_df.loc[raw_df["ID"] == edit_id, "Historie_Zmen"] = log_action(
-                                        curr_row["Historie_Zmen"], "log_deleted"
+                                        curr_row["Historie_Zmen"], "[[log_deleted]]"
                                     )
                                     conn.update(worksheet=sheet_name, data=raw_df)
                                     st.warning(_t("deleted_ok"))
